@@ -361,7 +361,7 @@ if __name__ == "__main__":
     fermi_only = False
     fig_type = "png"
     metadata_dir = r"C:\Users\dugue\Desktop\metadata"
-    work_dir = r"C:\Users\dugue\OneDrive\spin-spin\444_520_PS"
+    work_dir = r"C:\Users\dugue\OneDrive\spin-spin_coupling\444_520_PS"
     prefix = "611"
     K = 8.6173e-05
     C = 239.203931

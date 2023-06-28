@@ -7,8 +7,38 @@ from matplotlib import colors
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 from sympy import *
+import os
 
-plt.rcParams["font.size"] = 15
+from decompose_stress import rotate_stress_tensor
+from phonon_contribution import poly_fitting
+from uncertainties import unumpy
+
+np.set_printoptions(suppress=True)
+
+
+def plot_stress_ellipsoid(principal_stresses):
+    # the principal stresses are the enigvalues of the stress tensor
+    assert principal_stresses.shape == (3,)
+    a, b, c = principal_stresses / 2
+
+    # Define the angles for plotting
+    phi = np.linspace(0, 2 * np.pi, 100)
+    theta = np.linspace(0, np.pi, 100)
+
+    # Define the coordinates of the ellipsoid
+    x = a * np.outer(np.cos(phi), np.sin(theta))
+    y = b * np.outer(np.sin(phi), np.sin(theta))
+    z = c * np.outer(np.ones_like(phi), np.cos(theta))
+
+    # Create a 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(x, y, z, color='b')
+    ax.set_xlabel('s1')
+    ax.set_ylabel('s2')
+    ax.set_zlabel('s3')
+    ax.set_title('Stress Ellipsoid')
+    plt.show()
 
 
 def read_elastic_tensor(csv_path, json_path):
@@ -27,7 +57,7 @@ def read_elastic_tensor(csv_path, json_path):
                 elastic_tensor_dict[scale] = elastic_tensor
                 elastic_tensor = []
 
-    json.dump(elastic_tensor_dict, open(json_path, "w"), indent=4)
+    json.dump(elastic_tensor_dict, open(json_path, "w"))
 
 
 def independent_element_c3v(elastic_tensor):
@@ -46,6 +76,7 @@ def independent_element_c3v(elastic_tensor):
     element_0_3 = elastic_tensor[0][3]
     element_0_4 = elastic_tensor[0][4]
 
+    # C3v symmetry check
     for i in range(3):
         for j in range(3):
             if i == j:
@@ -86,7 +117,7 @@ def independent_element_c3v(elastic_tensor):
 
 def construct_tensor_c3v(elements):
     # elements in order of [element_0_0, element_0_1, element_3_3, element_3_4, element_0_4, element_0_3]
-    tensor = np.zeros((6, 6))
+    tensor = unumpy.uarray(np.zeros((6, 6)), np.zeros((6, 6)))
     for i in range(3):
         for j in range(3):
             tensor[i][j] = elements[0] if i == j else elements[1]
@@ -106,8 +137,8 @@ def construct_tensor_c3v(elements):
     return tensor
 
 
-def fitting_elastic_tensor():
-    elastic_tensor_dict = json.load(open(work_dir + "/elastic_tensor_nv_diamond_444.json", "r"))
+def fitting_elastic_tensor(to_be_fitted, fitting_result):
+    elastic_tensor_dict = json.load(open(to_be_fitted, "r"))
     scale_list = list(elastic_tensor_dict.keys())
     scale_list = list(map(float, scale_list))
     scale_list = np.array(scale_list) - 1
@@ -135,237 +166,186 @@ def fitting_elastic_tensor():
         ax.scatter(scale_list, tensor_list[tensor_index], marker="x", c="r")
         ax.plot(scale_sample, np.poly1d(coef)(scale_sample))
         ax.ticklabel_format(style='sci', scilimits=(-2, 2), axis='y')
-        ax.set_title(title_list[tensor_index])
+        ax.set_title(c3v_name_list[tensor_index])
     plt.subplots_adjust(hspace=0.8)
     plt.show()
 
-    json.dump([coef_list, error_list], open(work_dir + "/fitting_elastic_tensor_nv_diamond_444.json", "w"))
+    json.dump([coef_list, error_list], open(fitting_result, "w"))
 
 
-def get_elastic_tensor(scale):
-    coef_list, error_list = json.load(open(work_dir + "/fitting_elastic_tensor_nv_diamond_444.json", "r"))
-    elements = [np.poly1d(coef)(scale) for coef in coef_list]
-    errors = [((error[0] * scale) ** 2 + error[1] ** 2) ** .5 for error in error_list]
-    np.set_printoptions(suppress=True)
-    print(elements)
-    print(errors)
-    return construct_tensor_c3v(elements), construct_tensor_c3v(errors)
+def get_elastic_tensor(coef_with_error, scale):
+    elements_with_error = coef_with_error.T[0] * scale + coef_with_error.T[1]
+    return construct_tensor_c3v(elements_with_error)
 
 
-def get_elastic_coef(scale):
-    _elastic_tensor, error = get_elastic_tensor(scale)
-    return sum(_elastic_tensor[0][:3]), np.linalg.norm(error[0][:3]),
+def fit_A0_strain():
+    fitting_result = {}
+    for filename in metadata_list:
+        data = json.load(open(metadata_dir + "/" + filename, "r"))
+        fitting_result[filename[:-5]] = {}
 
+        # scale
+        for obj in data:
+            obj["scale"] = float(obj["path"].split("/")[1])
+        data.sort(key=lambda obj: obj["scale"])
+        scale_list = np.array([obj["scale"] for obj in data])
 
-def stress_ellipsoid(normal=True, atom=0):
-    # u from 0 to 360
-    # v from 0 to 180
-    u = np.linspace(0, 2 * np.pi, 3000)
-    v = np.linspace(0, np.pi, 3000)
-
-    # 单位应变/向量
-    # strain = np.array([np.outer(np.cos(u), np.sin(v)).reshape(u.shape[0] * v.shape[0]),
-    #                    np.outer(np.sin(u), np.sin(v)).reshape(u.shape[0] * v.shape[0]),
-    #                    np.outer(np.ones(np.size(u)), np.cos(v)).reshape(u.shape[0] * v.shape[0])])
-    stress = np.array([np.outer(np.cos(u), np.sin(v)).reshape(u.shape[0] * v.shape[0]),
-                       np.outer(np.sin(u), np.sin(v)).reshape(u.shape[0] * v.shape[0]),
-                       np.outer(np.ones(np.size(u)), np.cos(v)).reshape(u.shape[0] * v.shape[0])])
-
-    if normal:
-        temp_elastic_moduli = elastic_moduli_inv_in_kBar[:3, :3]
-        temp_hyper_strain = hyper_strain[:3, atom].T
-    else:
-        temp_elastic_moduli = elastic_moduli_inv_in_kBar[3:, 3:]
-        temp_hyper_strain = hyper_strain[3:, atom].T
-
-    # stress = temp_elastic_moduli.dot(strain)
-    strain = temp_elastic_moduli.dot(stress)
-    # hyperfine to heatmap
-    color_data = temp_hyper_strain.dot(strain)
-    max = color_data.max()
-    # max_strain = strain.T[np.where(color_data == max)[0][0]]
-    # max_stress = temp_elastic_moduli.dot(max_strain.T)
-    max_stress = stress.T[np.where(color_data == max)[0][0]]
-    print(normal, atom, round(max, 2),
-          "&(" + ",".join([str(round(i, 3)) for i in (max_stress / np.linalg.norm(max_stress))]) + ")")
-    min = color_data.min()
-    # min_strain = strain.T[np.where(color_data == min)[0][0]]
-    # min_stress = temp_elastic_moduli.dot(min_strain.T)
-    # print(normal, atom, "min", min, *min_stress)
-    color_data = color_data.reshape((u.shape[0], v.shape[0]))
-    norm = colors.Normalize(vmin=min, vmax=max)
-
-    if True:
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        # ax.plot_surface(stress[0].reshape((u.shape[0], v.shape[0])), stress[1].reshape((u.shape[0], v.shape[0])),
-        #                 stress[2].reshape((u.shape[0], v.shape[0])), facecolors=plt.cm.jet(norm(color_data)))
-        ax.plot_surface(strain[0].reshape((u.shape[0], v.shape[0])), strain[1].reshape((u.shape[0], v.shape[0])),
-                        strain[2].reshape((u.shape[0], v.shape[0])), facecolors=plt.cm.jet(norm(color_data)))
-        cbar = fig.colorbar(cm.ScalarMappable(cmap=plt.cm.jet, norm=norm), ax=ax, label="$A$ (kHz/kbar)",
-                            shrink=0.75)
-        cbar.ax.ticklabel_format(style='sci', scilimits=(-1, 2), axis='both')
-        # ticks=[round(min, 1), 0, round(max, 1)],
-        # ax.contourf(x, y, z, zdir='x', offset=-2 * a, cmap=cm.coolwarm)
-        # ax.contourf(x, y, z, zdir='y', offset=1.8 * b, cmap=cm.coolwarm)
-        # ax.contourf(x, y, z, zdir='z', offset=-2 * c, cmap=cm.coolwarm)
-
-        # if normal:
-        #     ax.set_xlabel('$\sigma_{XX}$ (kbar)')
-        #     ax.set_ylabel('$\sigma_{YY}$ (kbar)')
-        #     ax.set_zlabel('$\sigma_{ZZ}$ (kbar)')
-        # else:
-        #     ax.set_xlabel('$\sigma_{YZ}$ (kbar)')
-        #     ax.set_ylabel('$\sigma_{ZX}$ (kbar)')
-        #     ax.set_zlabel('$\sigma_{XY}$ (kbar)')
-        if normal:
-            ax.set_xlabel('$\epsilon_{XX}$ (kbar$^{-1}$)')
-            ax.set_ylabel('$\epsilon_{YY}$ (kbar$^{-1}$)')
-            ax.set_zlabel('$\epsilon_{ZZ}$ (kbar$^{-1}$)')
-        else:
-            ax.set_xlabel('$\epsilon_{YZ}$ (kbar$^{-1}$)')
-            ax.set_ylabel('$\epsilon_{ZX}$ (kbar$^{-1}$)')
-            ax.set_zlabel('$\epsilon_{XY}$ (kbar$^{-1}$)')
-
-        ax.xaxis.set_major_locator(MaxNLocator(2))
-        ax.yaxis.set_major_locator(MaxNLocator(2))
-        ax.zaxis.set_major_locator(MaxNLocator(2))
-        ax.ticklabel_format(style='sci', scilimits=(0, 2), axis='both')
-        ax.view_init(22.5, -45)
-        plt.tight_layout()
-        plt.savefig(f"{'normal' if normal else 'shear'}_{atom}.png")
-        plt.close("all")
-        # plt.show()
-
-def fit_dA_depslion():
-    import os
-    from phonon_contribution import poly_fitting
-    work_dir = r"C:\Users\dugue\OneDrive\spin-spin\1226_strain"
-    atom_list = [1, 3, 421, 42, 362, 231]
-    atom_name = ["$^{14}N$", "$^{13}C(1)$", "$^{13}C(2)$", "$^{13}C(3)$", "$^{13}C(4)$", "$^{13}C(5)$"]
-    direction = np.array([1, 1, 1])
-    direction = direction / np.linalg.norm(direction)
-    fit_res_colle = {}
-    for json_filename in os.listdir(work_dir):
-        if json_filename == "xx+yy+zz.json" and "dontread" not in json_filename:
-            print(json_filename[:-5])
-            fit_res_colle[json_filename[:-5]] = {}
-            data = json.load(open(f"{work_dir}/{json_filename}", "r"))
+        # the shape of A0 is (nuclei, scale, 3, 3)
+        A0_tensor = []
+        for atom in atom_list:
             for obj in data:
-                obj["delta"] = float(obj["path"].split("/")[1])
-            data.sort(key=lambda obj: obj["delta"])
-            delta_list = np.array([obj['delta'] for obj in data])
-            x = np.linspace(delta_list[0], delta_list[-1], 100)
-            zero_index = np.where(delta_list == 0)[0][0]
+                A0_tensor.append(obj['hyperfine_tensor'][str(atom)])
+        A0_tensor = np.array(A0_tensor).reshape((len(atom_list), len(scale_list), 3, 3))
+        A0_tensor = A0_tensor.transpose((0, 2, 3, 1)).reshape((-1, len(scale_list)))
 
-            # energy = np.array([obj['energy'] for obj in data]) - data[zero_index]['energy']
-            # hyperfine = {atom: np.array([obj['hyperfine_v'][str(atom)] for obj in data]) for atom in atom_list}
-            hyperfine = {atom: np.array([
-                np.linalg.norm(np.array(obj['hyperfine_tensor'][str(atom)]).dot(direction)) * np.sign(obj['fermi_contact'][str(atom)])
-                for obj in data]) for atom in atom_list}
+        coef_list = []
+        error_list = []
+        for A0 in A0_tensor:
+            coef, error, _ = poly_fitting(scale_list, A0, 1)
+            coef_list.append(coef)
+            error_list.append(error)
+        coef_list = np.array(coef_list).reshape((len(atom_list), 3, 3, 2))
+        error_list = np.array(error_list).reshape((len(atom_list), 3, 3, 2))
+        fitting_result[filename[:-5]] = [coef_list.tolist(), error_list.tolist()]
+    json.dump(fitting_result, open(work_dir + "/A0_strain_fit.json", "w"))
 
-            fig = plt.figure()
 
-            # A for 6 nuclei
-            ax_list = [fig.add_subplot(panel) for panel in range(237)[231:]]
-            for i in range(6):
-                _coef, _error, _=poly_fitting(delta_list, hyperfine[atom_list[i]], 1)
-                fit_res = {"fit": _coef.tolist(), "error": _error.tolist()}
-                fit_res_colle[json_filename[:-5]][atom_name[i]] = fit_res
-                fit, error = list(zip(*fit_res.values()))[0]
-                print(atom_name[i], fit, error)
-                # for fit, error in zip(*fit_res.values()):
-                #     print(f"{fit} ± {error} {abs(error/fit)}")
+def get_A0_coefficient():
+    A0_coefficient = []
+    for atom in range(6):
+        for index in ["xx", "yy", "zz", "xy", "yz", "zx"]:
+            coef_list, error_list = fitting_result[index]
+            # shape of coef_list is (atom, 3, 3, 2)
+            coef_list = np.array(coef_list[atom])
+            coef0, coef1 = coef_list.transpose((2, 0, 1))
+            x = np.linspace(-.01, .01, 100)
+            A0_tensor_fit = np.einsum("ij,l->lij", coef0, x) + coef1
+            A0_fit = np.linalg.norm(A0_tensor_fit.dot(direction), axis=1) * np.sign(np.sum(A0_tensor_fit, axis=(1, 2)))
+            coef, error, _ = poly_fitting(x, A0_fit, 1)
+            A0_coefficient.append(coef[0])
+    # shape of A0_coefficient is (index, atom)
+    A0_coefficient = np.array(A0_coefficient).reshape((6, 6)).T
+    json.dump(A0_coefficient.tolist(), open(work_dir + "/A0_coefficient.json", "w"))
 
-                ax_list[i].scatter(delta_list, hyperfine[atom_list[i]])
-                if abs(fit) < error * 3:
-                    pass
-                else:
-                    ax_list[i].plot(x, np.poly1d(fit_res["fit"])(x), "r")
-                # ax_list[i].set_title(
-                #     f"{atom_name[i]} {round(fit_res['fit'][1], 2)}±{round(fit_res['error'][1], 2)}")
-                ax_list[i].set_title(atom_name[i])
-                ax_list[i].yaxis.set_major_locator(MaxNLocator(6))
 
-            # energy
-            # ax = fig.add_subplot(111)
-            # fit_res = fitting(delta_list, energy, 2)
-            # fit_res_colle[json_filename[:-5]]["energy"] = fit_res
-            # ax.scatter(delta_list, energy)
-            # ax.plot(x, np.poly1d(fit_res["fit"])(x), "r")
-            # # ax.set_title(f"energy {round(fit_res['fit'][0], 2)}±{round(fit_res['error'][0], 2)}")
-            # for fit, error in zip(*fit_res.values()):
-            #     print(f"{fit} ± {error} {abs(error / fit)}")
+def plot_A0_strain_fitting(to_be_plotted):
+    for filename in to_be_plotted:
+        coef_list, error_list = fitting_result[filename[:-5]]
+        data = json.load(open(metadata_dir + "/" + filename, "r"))
 
-            fig.tight_layout()
-            plt.subplots_adjust(hspace=0.8)
-            plt.savefig(f"{work_dir}/strain_{'.'.join(json_filename.split('.')[:-1])}.png", dpi=300)
-            plt.close("all")
-    json.dump(fit_res_colle, open(f"{work_dir}/dontread_fit_res_colle3.json", "w"), indent=4)
+        # scale
+        for obj in data:
+            obj["scale"] = float(obj["path"].split("/")[1])
+        data.sort(key=lambda obj: obj["scale"])
+        scale_list = np.array([obj["scale"] for obj in data])
+        x = np.linspace(scale_list[0], scale_list[-1], 100)
+
+        # the shape of A0 is (nuclei, scale, 3, 3)
+        A0_tensor = []
+        for atom in atom_list:
+            # scatter
+            for obj in data:
+                A0_tensor.append(obj['hyperfine_tensor'][str(atom)])
+        A0_tensor = np.array(A0_tensor).reshape((len(atom_list), len(scale_list), 3, 3))
+        A0_scatter = np.linalg.norm(A0_tensor.dot(direction), axis=2) * np.sign(np.sum(A0_tensor, axis=(2, 3)))
+        # shape of coef_list is (nuclei, 3, 3, 2)
+        coef0, coef1 = np.array(coef_list).transpose((3, 0, 1, 2))
+        # shape of A0_tensor_fit is (scale, nuclei, 3, 3)
+        A0_tensor_fit = np.einsum("ijk,l->ijkl", coef0, x).transpose((3, 0, 1, 2)) + coef1
+        A0_tensor_fit = A0_tensor_fit.transpose((1, 0, 2, 3))
+        A0_fit = np.linalg.norm(A0_tensor_fit.dot(direction), axis=2) * np.sign(np.sum(A0_tensor_fit, axis=(2, 3)))
+
+        fig = plt.figure()
+
+        # A0 for 6 nuclei
+        ax_list = [fig.add_subplot(panel) for panel in range(237)[231:]]
+        for i in range(6):
+            ax_list[i].scatter(scale_list, A0_scatter[i])
+            ax_list[i].plot(x, A0_fit[i], "r")
+            ax_list[i].yaxis.set_major_locator(MaxNLocator(6))
+
+        fig.tight_layout()
+        plt.subplots_adjust(hspace=0.8)
+        # plt.savefig(f"{work_dir}/strain_{'.'.join(json_filename.split('.')[:-1])}.png", dpi=300)
+        # plt.close("all")
+        plt.show()
+
+
+def hyperfine_ellipsoid(stress_tensor, origin_direction):
+    # theta from 0 to Pi and phi from 0 to 2Pi
+
+    theta = np.linspace(0.01, np.pi, 100)
+    phi = np.linspace(0, 2 * np.pi, 100)
+
+    # shape of direction is (theta, phi, 3)
+    direction = np.array([np.outer(np.sin(theta), np.cos(phi)),
+                          np.outer(np.sin(theta), np.sin(phi)),
+                          np.outer(np.cos(theta), np.ones_like(phi))]).transpose((1, 2, 0)).reshape((-1, 3))
+    # shape of stress is (theta * phi, 3, 3)
+    stress = np.array([rotate_stress_tensor(stress_tensor, origin_direction, _direction) for _direction in direction])
+    # shape of stress is (6, theta * phi)
+    stress = np.array([[_stress[0, 0], _stress[1, 1], _stress[2, 2],
+                        2 * _stress[0, 1], 2 * _stress[1, 2], 2 * _stress[2, 0]] for _stress in stress]).T
+    # shape of strain is (6, 6).dot(6, theta * phi) = (6, theta * phi)
+    strain = elastic_tensor_inv.dot(stress)
+    # shape of deltaA0 is (atom, 6).dot(6, theta * phi) = (atom, theta * phi)
+    deltaA0 = A0_coefficient.T.dot(strain).reshape((len(atom_list), theta.shape[0], phi.shape[0]))
+    for dA in deltaA0:
+        # (theta, phi), (theta, phi, 3)
+        x, y, z = np.einsum("ij,ijk->ijk", dA, direction.reshape((theta.shape[0], phi.shape[0], 3))).reshape((-1, 3)).T
+        x = x.reshape((theta.shape[0], phi.shape[0]))
+        y = y.reshape((theta.shape[0], phi.shape[0]))
+        z = z.reshape((theta.shape[0], phi.shape[0]))
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot_surface(x, y, z)
+
+        # Set the axis labels and title
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title('Surface plot')
+
+        # Show the plot
+        plt.show()
 
 
 if __name__ == "__main__":
-    # work_dir = r"C:\Users\dugue\OneDrive\spin-spin\444_520_PS"
-    # title_list = ["element_0_0", "element_0_1", "element_3_3", "element_3_4", "element_0_4", "element_0_3"]
+    metadata_dir = r"C:\Users\dugue\Desktop\metadata"
+    work_dir = r"C:\Users\dugue\OneDrive\spin-spin_coupling\444_520_PS"
+    c3v_name_list = ["element_0_0", "element_0_1", "element_3_3", "element_3_4", "element_0_4", "element_0_3"]
+
+    # real stress ellipsoid
+    # plot_stress_ellipsoid(np.array([1,2,3]))
+
+    # read_elastic_tensor(metadata_dir + "/elastic_tensor_nv_diamond_444",
+    #                     work_dir + "/elastic_tensor_nv_diamond_444.json")
     #
-    # hyper_strain = np.array([[-0.5, -66, 46.9, 14.1, -27.6, -12.9],
-    #                          [-0.5, -255, -10.1, 8.4, -7.7, 1.7],
-    #                          [-0.5, -256, -12.2, 8.5, -3.2, 1.7],
-    #                          [7.5, -211, -0.4, 2.3, 1.0, 17.1],
-    #                          [7.4, 193, -2.0, -7.8, -15.5, -11.2],
-    #                          [7.5, 191, -1.0, -7.8, -0.9, -11.2]])
-    # hyper_strain *= 1e3
-    # kBar2GPa = 0.1013
-    # # --------------------------------------------------------------------------
-    # # read_elastic_tensor(work_dir + "/elastic_tensor_nv_diamond_444",
-    # #                    work_dir + "/elastic_tensor_nv_diamond_444.json")
-    # # --------------------------------------------------------------------------
-    # # fitting_elastic_tensor()
-    # # --------------------------------------------------------------------------
-    #
-    # elastic_tensor, error = get_elastic_tensor(0.0036800710943974)
-    # print(elastic_tensor, error)
-    # elastic_coef, error_ = get_elastic_coef(0.0036800710943974)
-    # print(elastic_coef, error_)
-    # print(30 / 0.1013 / elastic_coef)
+    # fitting_elastic_tensor(work_dir + "/elastic_tensor_nv_diamond_444.json",
+    #                        work_dir + "/fitting_elastic_tensor_nv_diamond_444.json")
+
+    coef_list, error_list = json.load(open(work_dir + "/fitting_elastic_tensor_nv_diamond_444.json", "r"))
+    coef_with_error = unumpy.uarray(coef_list, error_list)
+    # elastic_tensor_with_error = get_elastic_tensor(coef_with_error, 0.0036800710943974)
+    # print(elastic_tensor_with_error)
     # -------------------------------------------------------------------------------
+    atom_list = [1, 3, 421, 42, 362, 231]
+    metadata_list = ["xx.json", "yy.json", "zz.json", "xy.json", "yz.json", "zx.json",
+                     "xx+yy+zz.json", "yz+zx+xy.json", "xx+yz.json"]
+    atom_name = ["$^{14}N$", "$^{13}C(1)$", "$^{13}C(2)$", "$^{13}C(3)$", "$^{13}C(4)$", "$^{13}C(5)$"]
+    direction = np.array([1, 1, 1])
+    direction = direction / np.linalg.norm(direction)
 
-    # stress = elastic_moduli_in_kBar.dot(strain)
-    # elastic_moduli_in_kBar = np.array(
-    #     [[1.01453699e+04, 1.26471400e+03, 1.26471400e+03, 3.93870000e+00, 4.91080000e+00, 3.93870000e+00],
-    #      [1.26471400e+03, 1.01453699e+04, 1.26471400e+03, 3.93870000e+00, 3.93870000e+00, 4.91080000e+00],
-    #      [1.26471400e+03, 1.26471400e+03, 1.01453699e+04, 4.91080000e+00, 3.93870000e+00, 3.93870000e+00],
-    #      [3.93870000e+00, 3.93870000e+00, 4.91080000e+00, 5.39007660e+03, -9.52600000e-01, -9.52600000e-01],
-    #      [4.91080000e+00, 3.93870000e+00, 3.93870000e+00, -9.52600000e-01, 5.39007660e+03, -9.52600000e-01],
-    #      [3.93870000e+00, 4.91080000e+00, 3.93870000e+00, -9.52600000e-01, -9.52600000e-01, 5.39007660e+03]])
+    fitting_result = json.load(open(work_dir + "/A0_strain_fit.json", "r"))
+    # fit_A0_strain()
+    # get_A0_coefficient()
+    # plot_A0_strain_fitting(["xy.json"])
+    # shape = (index, atom) index in order of ["xx", "yy", "zz", "xy", "yz", "zx"]
+    A0_coefficient = json.load(open(work_dir + "/A0_coefficient.json", "r"))
+    A0_coefficient = np.array(A0_coefficient)
+    elastic_tensor = unumpy.nominal_values(get_elastic_tensor(coef_with_error, 0))
+    elastic_tensor_inv = np.linalg.inv(elastic_tensor)
 
-    # elastic_moduli_in_kBar = np.array([[10652, 1224, 1224, 0, 0, 0],
-    #                                    [1224, 10652, 1224, 0, 0, 0],
-    #                                    [1224, 1224, 10652, 0, 0, 0],
-    #                                    [0, 0, 0, 5706, 0, 0],
-    #                                    [0, 0, 0, 0, 5706, 0],
-    #                                    [0, 0, 0, 0, 0, 5706]])
-    # elastic_moduli_inv_in_kBar = np.linalg.inv(elastic_moduli_in_kBar)
-
-    # A = hyper_strain.dot(strain)
-    # hyper_strain = np.array(
-    #     [[-8.41945292e-01, -6.15639270e+01, -7.88820088e+00, 5.42905315e+00, -8.04837226e+00, -1.16958796e+01],
-    #      [-8.22700327e-01, -2.49565053e+02, -1.80406526e+01, 1.28679902e+01, -1.59003403e+00, 7.99076927e-01],
-    #      [-8.19668240e-01, -2.49367173e+02, 4.94972021e+01, 1.28511792e+01, -2.56465936e+01, 8.07103006e-01],
-    #      [7.92815871e+00, -2.18439561e+02, 4.78148383e-03, 2.66374640e+00, -1.65807981e+01, 1.65446945e+01],
-    #      [7.91379048e+00, 1.89820080e+02, -1.96502419e+00, -7.32920774e+00, -1.43250740e+00, -1.10943914e+01],
-    #      [7.95933675e+00, 1.91049751e+02, -9.29890947e-01, -7.38184456e+00, 1.88146858e+00, -1.10917362e+01]])
-    # hyper_strain = np.array([[-0.52678178, -254.37095133, -12.3272319, 8.45663437, -7.68536719, -12.94496392],
-    #                          [-0.4842665, -65.86223976, -10.0824711, 8.39433194, -3.16080846, 1.71628068],
-    #                          [-0.49304466, -256.09476127, 47.00300289, 14.10387601, -27.59664386, 1.74140626],
-    #                          [7.47924767, 190.7263894, -0.85132386, -7.72113814, -15.63628309, 17.08303804],
-    #                          [7.42468153, -214.26643203, -1.99796778, -7.76139314, -0.8998618, -11.23450311],
-    #                          [7.54172996, 191.12162192, -0.25820442, 2.34978923, 0.89230545, -11.23512471]])
-
-    # for i in [True, False]:
-    #     for j in range(6):
-    #         stress_ellipsoid(normal=i, atom=j)
-    # print(elastic_moduli_inv_in_kBar.dot(np.array([30, 30, 30, 0, 0, 0]).T / kBar2GPa))
-
-    # -----------------------------------------------
-    fit_dA_depslion()
+    # stress = elastic_tensor.dot(strain)
+    # A0 = A0_coefficient.dot(strain)
+    hyperfine_ellipsoid(np.array([[1, 0, 0], [0, 0, 0], [0, 0, 0]]), [1, 0, 0])

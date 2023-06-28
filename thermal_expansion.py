@@ -178,7 +178,7 @@ def get_volume_with_murnaghan_eos(coef_list, p):
 
 if __name__ == "__main__":
     metadata_dir = r"C:\Users\dugue\Desktop\metadata"
-    work_dir = r"C:\Users\dugue\OneDrive\spin-spin\444_520_PS"
+    work_dir = r"C:\Users\dugue\OneDrive\spin-spin_coupling\444_520_PS"
     prefix = "611"
     eV2J = 1.602176565e-19
     angstrom2m = 1e-10
