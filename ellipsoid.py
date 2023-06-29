@@ -404,10 +404,17 @@ if __name__ == "__main__":
     # shape = (index, atom) index in order of ["xx", "yy", "zz", "xy", "yz", "zx"]
     A0_coefficient = json.load(open(work_dir + "/A0_coefficient.json", "r"))
     A0_coefficient = np.array(A0_coefficient)
-    elastic_tensor = unumpy.nominal_values(
-        get_elastic_tensor(coef_with_error, 0))
+    elastic_tensor = get_elastic_tensor(coef_with_error, 0)
+    for i in elastic_tensor:
+        for j in i:
+            # print elasitc tensor with shorthand notation
+            print("{:.1uS}".format(j), end=" ")
+        print()
+    elastic_tensor = unumpy.nominal_values(elastic_tensor)
     elastic_tensor_inv = np.linalg.inv(elastic_tensor)
+    # print(A0_coefficient)
 
     # stress = elastic_tensor.dot(strain)
     # A0 = A0_coefficient.dot(strain)
-    hyperfine_ellipsoid(np.array([[1, 0, 0], [0, 0, 0], [0, 0, 0]]), [1, 0, 0])
+
+    # hyperfine_ellipsoid(np.array([[1, 0, 0], [0, 0, 0], [0, 0, 0]]), [1, 0, 0])
