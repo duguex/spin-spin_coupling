@@ -158,7 +158,8 @@ def fitting_elastic_tensor(to_be_fitted, fitting_result):
     fig = plt.figure()
 
     for ax_index, tensor_index in zip(range(321, 327), range(6)):
-        coef, cov = np.polyfit(scale_list, tensor_list[tensor_index], 1, cov=True)
+        coef, cov = np.polyfit(
+            scale_list, tensor_list[tensor_index], 1, cov=True)
         coef_list.append(coef.tolist())
         error_list.append(np.sqrt(cov.diagonal()).tolist())
 
@@ -195,8 +196,10 @@ def fit_A0_strain():
         for atom in atom_list:
             for obj in data:
                 A0_tensor.append(obj['hyperfine_tensor'][str(atom)])
-        A0_tensor = np.array(A0_tensor).reshape((len(atom_list), len(scale_list), 3, 3))
-        A0_tensor = A0_tensor.transpose((0, 2, 3, 1)).reshape((-1, len(scale_list)))
+        A0_tensor = np.array(A0_tensor).reshape(
+            (len(atom_list), len(scale_list), 3, 3))
+        A0_tensor = A0_tensor.transpose(
+            (0, 2, 3, 1)).reshape((-1, len(scale_list)))
 
         coef_list = []
         error_list = []
@@ -206,7 +209,8 @@ def fit_A0_strain():
             error_list.append(error)
         coef_list = np.array(coef_list).reshape((len(atom_list), 3, 3, 2))
         error_list = np.array(error_list).reshape((len(atom_list), 3, 3, 2))
-        fitting_result[filename[:-5]] = [coef_list.tolist(), error_list.tolist()]
+        fitting_result[filename[:-5]] = [coef_list.tolist(),
+                                         error_list.tolist()]
     json.dump(fitting_result, open(work_dir + "/A0_strain_fit.json", "w"))
 
 
@@ -220,12 +224,14 @@ def get_A0_coefficient():
             coef0, coef1 = coef_list.transpose((2, 0, 1))
             x = np.linspace(-.01, .01, 100)
             A0_tensor_fit = np.einsum("ij,l->lij", coef0, x) + coef1
-            A0_fit = np.linalg.norm(A0_tensor_fit.dot(direction), axis=1) * np.sign(np.sum(A0_tensor_fit, axis=(1, 2)))
+            A0_fit = np.linalg.norm(A0_tensor_fit.dot(
+                direction), axis=1) * np.sign(np.sum(A0_tensor_fit, axis=(1, 2)))
             coef, error, _ = poly_fitting(x, A0_fit, 1)
             A0_coefficient.append(coef[0])
     # shape of A0_coefficient is (index, atom)
     A0_coefficient = np.array(A0_coefficient).reshape((6, 6)).T
-    json.dump(A0_coefficient.tolist(), open(work_dir + "/A0_coefficient.json", "w"))
+    json.dump(A0_coefficient.tolist(), open(
+        work_dir + "/A0_coefficient.json", "w"))
 
 
 def plot_A0_strain_fitting(to_be_plotted):
@@ -246,14 +252,18 @@ def plot_A0_strain_fitting(to_be_plotted):
             # scatter
             for obj in data:
                 A0_tensor.append(obj['hyperfine_tensor'][str(atom)])
-        A0_tensor = np.array(A0_tensor).reshape((len(atom_list), len(scale_list), 3, 3))
-        A0_scatter = np.linalg.norm(A0_tensor.dot(direction), axis=2) * np.sign(np.sum(A0_tensor, axis=(2, 3)))
+        A0_tensor = np.array(A0_tensor).reshape(
+            (len(atom_list), len(scale_list), 3, 3))
+        A0_scatter = np.linalg.norm(A0_tensor.dot(
+            direction), axis=2) * np.sign(np.sum(A0_tensor, axis=(2, 3)))
         # shape of coef_list is (nuclei, 3, 3, 2)
         coef0, coef1 = np.array(coef_list).transpose((3, 0, 1, 2))
         # shape of A0_tensor_fit is (scale, nuclei, 3, 3)
-        A0_tensor_fit = np.einsum("ijk,l->ijkl", coef0, x).transpose((3, 0, 1, 2)) + coef1
+        A0_tensor_fit = np.einsum(
+            "ijk,l->ijkl", coef0, x).transpose((3, 0, 1, 2)) + coef1
         A0_tensor_fit = A0_tensor_fit.transpose((1, 0, 2, 3))
-        A0_fit = np.linalg.norm(A0_tensor_fit.dot(direction), axis=2) * np.sign(np.sum(A0_tensor_fit, axis=(2, 3)))
+        A0_fit = np.linalg.norm(A0_tensor_fit.dot(
+            direction), axis=2) * np.sign(np.sum(A0_tensor_fit, axis=(2, 3)))
 
         fig = plt.figure()
 
@@ -282,38 +292,87 @@ def hyperfine_ellipsoid(stress_tensor, origin_direction):
                           np.outer(np.sin(theta), np.sin(phi)),
                           np.outer(np.cos(theta), np.ones_like(phi))]).transpose((1, 2, 0)).reshape((-1, 3))
     # shape of stress is (theta * phi, 3, 3)
-    stress = np.array([rotate_stress_tensor(stress_tensor, origin_direction, _direction) for _direction in direction])
+    stress = np.array([rotate_stress_tensor(
+        stress_tensor, origin_direction, _direction) for _direction in direction])
     # shape of stress is (6, theta * phi)
     stress = np.array([[_stress[0, 0], _stress[1, 1], _stress[2, 2],
                         2 * _stress[0, 1], 2 * _stress[1, 2], 2 * _stress[2, 0]] for _stress in stress]).T
     # shape of strain is (6, 6).dot(6, theta * phi) = (6, theta * phi)
     strain = elastic_tensor_inv.dot(stress)
     # shape of deltaA0 is (atom, 6).dot(6, theta * phi) = (atom, theta * phi)
-    deltaA0 = A0_coefficient.T.dot(strain).reshape((len(atom_list), theta.shape[0], phi.shape[0]))
+    deltaA0 = A0_coefficient.T.dot(strain).reshape(
+        (len(atom_list), theta.shape[0], phi.shape[0]))
     for dA in deltaA0:
         # (theta, phi), (theta, phi, 3)
-        x, y, z = np.einsum("ij,ijk->ijk", dA, direction.reshape((theta.shape[0], phi.shape[0], 3))).reshape((-1, 3)).T
+        x, y, z = np.einsum("ij,ijk->ijk", dA, direction.reshape(
+            (theta.shape[0], phi.shape[0], 3))).reshape((-1, 3)).T
         x = x.reshape((theta.shape[0], phi.shape[0]))
         y = y.reshape((theta.shape[0], phi.shape[0]))
         z = z.reshape((theta.shape[0], phi.shape[0]))
+
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        ax.plot_surface(x, y, z)
+        # Normalize deltaA0_mag to the range [0, 1]
+        dA_norm = (dA - dA.min()) / (dA.max() - dA.min())
+        # Create a colormap based on deltaA0_mag_norm
+        cmap = plt.cm.get_cmap('coolwarm')
+        colors = cmap(dA_norm)
+        # Plot the surface with facecolors based on deltaA0_mag_norm
+        ax.plot_surface(x, y, z, facecolors=colors, shade=False)
+
+        # Add colorbar
+        m = plt.cm.ScalarMappable(cmap=cmap)
+        m.set_array(dA)
+        cbar = plt.colorbar(m, shrink=0.6, aspect=10, format='%.1e')
+        cbar.ax.set_ylabel(
+            r'$\frac{\mathrm{d}A_0}{\mathrm{d}\sigma}$ (MHz/GPa)')
+        cbar.ax.yaxis.set_major_locator(MaxNLocator(6))
+
+        # get proper carmera angle
+        max_arg = np.argmax(dA)
+        max_theta = theta[max_arg // phi.shape[0]]
+        max_phi = phi[max_arg % phi.shape[0]]
+
+        min_arg = np.argmin(dA)
+        min_theta = theta[min_arg // phi.shape[0]]
+        min_phi = phi[min_arg % phi.shape[0]]
+
+        # normalize the angle
+        # if max_theta > np.pi / 2:
+        #     max_theta = np.pi - max_theta
+        #     max_phi -= np.pi
+
+        print(dA.max(), np.sin(max_theta) * np.cos(max_phi),
+              np.sin(max_theta) * np.sin(max_phi), np.cos(max_theta),
+              dA.min(), np.sin(min_theta) * np.cos(min_phi),
+              np.sin(min_theta) * np.sin(min_phi), np.cos(min_theta))
 
         # Set the axis labels and title
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
-        ax.set_title('Surface plot')
+        ax.set_title(
+            f"nuclues {atom_name[deltaA0.tolist().index(dA.tolist())]}")
+
+        # Set the axis labels and title
+        ax.set_xlabel('X', labelpad=-10)
+        ax.set_ylabel('Y', labelpad=-10)
+        ax.set_zlabel('Z', labelpad=-10)
+
+        # Remove ticklabels
+        # ax.xaxis.set_ticklabels([])
+        # ax.yaxis.set_ticklabels([])
+        # ax.zaxis.set_ticklabels([])
 
         # Show the plot
-        plt.show()
+        # plt.show()
 
 
 if __name__ == "__main__":
     metadata_dir = r"C:\Users\dugue\Desktop\metadata"
     work_dir = r"C:\Users\dugue\OneDrive\spin-spin_coupling\444_520_PS"
-    c3v_name_list = ["element_0_0", "element_0_1", "element_3_3", "element_3_4", "element_0_4", "element_0_3"]
+    c3v_name_list = ["element_0_0", "element_0_1",
+                     "element_3_3", "element_3_4", "element_0_4", "element_0_3"]
 
     # real stress ellipsoid
     # plot_stress_ellipsoid(np.array([1,2,3]))
@@ -324,7 +383,8 @@ if __name__ == "__main__":
     # fitting_elastic_tensor(work_dir + "/elastic_tensor_nv_diamond_444.json",
     #                        work_dir + "/fitting_elastic_tensor_nv_diamond_444.json")
 
-    coef_list, error_list = json.load(open(work_dir + "/fitting_elastic_tensor_nv_diamond_444.json", "r"))
+    coef_list, error_list = json.load(
+        open(work_dir + "/fitting_elastic_tensor_nv_diamond_444.json", "r"))
     coef_with_error = unumpy.uarray(coef_list, error_list)
     # elastic_tensor_with_error = get_elastic_tensor(coef_with_error, 0.0036800710943974)
     # print(elastic_tensor_with_error)
@@ -332,7 +392,8 @@ if __name__ == "__main__":
     atom_list = [1, 3, 421, 42, 362, 231]
     metadata_list = ["xx.json", "yy.json", "zz.json", "xy.json", "yz.json", "zx.json",
                      "xx+yy+zz.json", "yz+zx+xy.json", "xx+yz.json"]
-    atom_name = ["$^{14}N$", "$^{13}C(1)$", "$^{13}C(2)$", "$^{13}C(3)$", "$^{13}C(4)$", "$^{13}C(5)$"]
+    atom_name = ["$^{14}N$", "$^{13}C(1)$", "$^{13}C(2)$",
+                 "$^{13}C(3)$", "$^{13}C(4)$", "$^{13}C(5)$"]
     direction = np.array([1, 1, 1])
     direction = direction / np.linalg.norm(direction)
 
@@ -343,7 +404,8 @@ if __name__ == "__main__":
     # shape = (index, atom) index in order of ["xx", "yy", "zz", "xy", "yz", "zx"]
     A0_coefficient = json.load(open(work_dir + "/A0_coefficient.json", "r"))
     A0_coefficient = np.array(A0_coefficient)
-    elastic_tensor = unumpy.nominal_values(get_elastic_tensor(coef_with_error, 0))
+    elastic_tensor = unumpy.nominal_values(
+        get_elastic_tensor(coef_with_error, 0))
     elastic_tensor_inv = np.linalg.inv(elastic_tensor)
 
     # stress = elastic_tensor.dot(strain)
